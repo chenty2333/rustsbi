@@ -1,0 +1,103 @@
+name: RTEMS
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".cargo/**"
+      - ".github/scripts/prototyper-rtems-boot.sh"
+      - ".github/workflows/rtems.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "xtask/**"
+      - "library/**"
+      - "firmware/prototyper/**"
+      - "firmware/runtime/**"
+  push:
+    branches: ["main"]
+    paths:
+      - ".cargo/**"
+      - ".github/scripts/prototyper-rtems-boot.sh"
+      - ".github/workflows/rtems.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "xtask/**"
+      - "library/**"
+      - "firmware/prototyper/**"
+      - "firmware/runtime/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  rtems-boot:
+    name: Boot RTEMS (sbi)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install dev dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bison \
+            build-essential \
+            bzip2 \
+            curl \
+            flex \
+            git \
+            install-info \
+            libgmp-dev \
+            libmpc-dev \
+            libmpfr-dev \
+            patch \
+            python3 \
+            python3-dev \
+            qemu-system-misc \
+            texinfo \
+            unzip \
+            xz-utils \
+            zlib1g-dev
+          qemu-system-riscv64 --version
+
+      - name: Install required cargo
+        run: cargo install --locked cargo-binutils@0.4.0
+
+      # Pinned RSB and RTEMS commit products are cached under .cache/rtems.
+      # The key depends on the toolchain and guest commits, and the boot script
+      # (which holds BSP configuration and compiler settings).
+      - name: Cache RTEMS toolchain and build products
+        uses: actions/cache@v5
+        with:
+          path: |
+            .cache/rtems/downloads
+            .cache/rtems/opt/rtems/7
+            .cache/rtems/rtems-src
+          key: rtems-toolchain-rsb-74fffa09-rtems-af461674-${{ hashFiles('.github/scripts/prototyper-rtems-boot.sh') }}
+
+      # Structurally validate toolchain binary, archives, and ticker ELF after cache restoration.
+      - name: Check cached RTEMS assets
+        run: .github/scripts/prototyper-rtems-boot.sh check-cache
+
+      - name: Boot RTEMS
+        run: .github/scripts/prototyper-rtems-boot.sh boot
+
+      - name: Upload RTEMS log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rtems-log
+          path: qemu-logs/prototyper-rtems.log
+          if-no-files-found: warn
